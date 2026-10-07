@@ -1,0 +1,72 @@
+name: td4
+
+on:
+  push:
+    paths:
+      - "td4/**"
+      - ".github/workflows/td4.yml"
+  pull_request:
+    paths:
+      - "td4/**"
+      - ".github/workflows/td4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # pousser sur GHCR avec GITHUB_TOKEN
+
+env:
+  TRIVY: aquasec/trivy:0.74.0
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Nom de l'image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE=ghcr.io/${OWNER}/visites-api:${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: build
+        run: docker build --target prod -t "$IMAGE" td4/app
+
+      - name: scan
+        # échoue (code 1) s'il reste une faille CRITICAL
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            "$TRIVY" image --quiet --severity CRITICAL --exit-code 1 "$IMAGE"
+
+      - name: test
+        run: |
+          docker network create ci
+          docker run -d --name db --network ci \
+            -e POSTGRES_DB=visites -e POSTGRES_USER=app -e POSTGRES_PASSWORD=ci-password \
+            postgres:18-alpine
+          docker run -d --name cache --network ci redis:8-alpine
+          # l'API plante si la base n'est pas prête : on l'attend
+          for i in $(seq 1 30); do
+            docker exec db pg_isready -h 127.0.0.1 -U app -d visites && break
+            sleep 2
+          done
+          docker run -d --name api --network ci -p 8000:3000 \
+            --read-only --tmpfs /tmp --cap-drop ALL --memory 256m \
+            -e DB_HOST=db -e DB_NAME=visites -e DB_USER=app -e DB_PASSWORD=ci-password \
+            -e REDIS_URL=redis://cache:6379 \
+            "$IMAGE"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/; then echo; echo "API OK"; exit 0; fi
+            sleep 2
+          done
+          echo "L'API ne répond pas"; docker logs api; exit 1
+
+      - name: logs (si échec)
+        if: failure()
+        run: docker logs api || true
+
+      - name: publish
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE"

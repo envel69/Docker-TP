@@ -1,0 +1,22 @@
+# Dev : chargé automatiquement par `docker compose up`.
+services:
+  api:
+    build:
+      target: dev
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+    develop:
+      watch:
+        - action: sync
+          path: ./app/src
+          target: /app/src
+        - action: rebuild
+          path: ./app/package.json
+
+  db:
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}

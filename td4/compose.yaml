@@ -1,0 +1,58 @@
+# Base commune : aucun port publié, aucun mot de passe.
+# Dev  : docker compose up            (fusionne automatiquement compose.override.yaml)
+# Prod : docker compose -f compose.yaml -f compose.prod.yaml up -d
+name: td4
+
+services:
+  api:
+    build:
+      context: ./app
+      target: prod
+    environment:
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-visites}
+      DB_USER: ${POSTGRES_USER:-app}
+      REDIS_URL: redis://cache:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    healthcheck:
+      # node:24-alpine n'a pas curl, mais busybox fournit wget
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-visites}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      # $$ : échappe le $ pour Compose -> la variable est évaluée par le shell DANS le conteneur
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  cache:
+    image: redis:8-alpine
+    volumes:
+      - cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:
+  cache-data:

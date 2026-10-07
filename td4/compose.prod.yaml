@@ -1,0 +1,34 @@
+# Prod : docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+# Prérequis : secrets/db_password.txt (hors git), cf. .env.example
+services:
+  api:
+    image: ${API_IMAGE:-td4-api}
+    ports:
+      - "${API_PORT:-8000}:3000"
+    environment:
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    restart: unless-stopped
+    # durcissement (B2)
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+
+  db:
+    # aucun port publié : la base n'est joignable que par le réseau interne
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    restart: unless-stopped
+
+  cache:
+    restart: unless-stopped
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
